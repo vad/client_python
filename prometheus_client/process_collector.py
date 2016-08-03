@@ -15,7 +15,7 @@ except ImportError:
 
 class ProcessCollector(object):
     """Collector for Standard Exports such as cpu and memory."""
-    def __init__(self, namespace='', pid=lambda: 'self', proc='/proc', registry=core.REGISTRY):
+    def __init__(self, namespace='', pid=lambda: 'self', proc='/proc', registry=core.REGISTRY, labels=None):
         self._namespace = namespace
         self._pid = pid
         self._proc = proc
@@ -37,6 +37,7 @@ class ProcessCollector(object):
             pass
         if registry:
             registry.register(self)
+        self._labels = labels
 
     def _boot_time(self):
         with open(os.path.join(self._proc, 'stat')) as stat:
@@ -54,23 +55,37 @@ class ProcessCollector(object):
             # File likely didn't exist, fail silently.
             return []
 
+        labels_keys = self._labels.keys() if self._labels else []
+        labels_values = self._labels.values() if self._labels else []
         result = []
         try:
             with open(os.path.join(pid, 'stat')) as stat:
                 parts = (stat.read().split(')')[-1].split())
-            vmem = core.GaugeMetricFamily(self._prefix + 'virtual_memory_bytes',
-                                          'Virtual memory size in bytes.', value=float(parts[20]))
-            rss = core.GaugeMetricFamily(self._prefix + 'resident_memory_bytes', 'Resident memory size in bytes.',
-                                         value=float(parts[21]) * _PAGESIZE)
+            vmem = core.GaugeMetricFamily(
+                self._prefix + 'virtual_memory_bytes',
+                'Virtual memory size in bytes.',
+                labels=labels_keys)
+            vmem.add_metric(labels_values, value=float(parts[20]))
+
+            rss = core.GaugeMetricFamily(
+                self._prefix + 'resident_memory_bytes',
+                'Resident memory size in bytes.',
+                labels=labels_keys)
+            rss.add_metric(labels_values, value=float(parts[21]) * _PAGESIZE)
+
             start_time_secs = float(parts[19]) / self._ticks
-            start_time = core.GaugeMetricFamily(self._prefix + 'start_time_seconds',
-                                                'Start time of the process since unix epoch in seconds.',
-                                                value=start_time_secs + self._btime)
+            start_time = core.GaugeMetricFamily(
+                self._prefix + 'start_time_seconds',
+                'Start time of the process since unix epoch in seconds.',
+                labels=labels_keys)
+            start_time.add_metric(labels_values, value=start_time_secs + self._btime)
             utime = float(parts[11]) / self._ticks
             stime = float(parts[12]) / self._ticks
-            cpu = core.CounterMetricFamily(self._prefix + 'cpu_seconds_total',
-                                           'Total user and system CPU time spent in seconds.',
-                                           value=utime + stime)
+            cpu = core.CounterMetricFamily(
+                self._prefix + 'cpu_seconds_total',
+                'Total user and system CPU time spent in seconds.',
+                labels=labels_keys)
+            cpu.add_metric(labels_values, value=utime + stime)
             result.extend([vmem, rss, start_time, cpu])
         except IOError:
             pass
@@ -79,13 +94,17 @@ class ProcessCollector(object):
             with open(os.path.join(pid, 'limits')) as limits:
                 for line in limits:
                     if line.startswith('Max open file'):
-                        max_fds = core.GaugeMetricFamily(self._prefix + 'max_fds',
-                                                         'Maximum number of open file descriptors.',
-                                                         value=float(line.split()[3]))
+                        max_fds = core.GaugeMetricFamily(
+                            self._prefix + 'max_fds',
+                            'Maximum number of open file descriptors.',
+                            labels=labels_keys)
+                        max_fds.add_metric(labels_values, value=float(line.split()[3]))
                         break
-            open_fds = core.GaugeMetricFamily(self._prefix + 'open_fds',
-                                              'Number of open file descriptors.',
-                                              len(os.listdir(os.path.join(pid, 'fd'))))
+            open_fds = core.GaugeMetricFamily(
+                self._prefix + 'open_fds',
+                'Number of open file descriptors.',
+                labels=labels_keys)
+            open_fds.add_metric(labels_values, value=len(os.listdir(os.path.join(pid, 'fd'))))
             result.extend([open_fds, max_fds])
         except IOError:
             pass
